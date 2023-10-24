@@ -5,7 +5,7 @@ use std::mem;
 use std::ptr;
 
 use libc::{c_int, EINVAL};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_env = "newlib")))]
 use libc::{sigset_t, SIG_UNBLOCK};
 
 use crate::consts::signal::*;
@@ -14,7 +14,7 @@ use crate::low_level;
 #[derive(Clone, Copy, Debug)]
 enum DefaultKind {
     Ignore,
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "vita")))]
     Stop,
     Term,
 }
@@ -35,7 +35,7 @@ macro_rules! s {
     };
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "vita")))]
 const DETAILS: &[Details] = &[
     s!(SIGABRT, Term),
     s!(SIGALRM, Term),
@@ -80,6 +80,25 @@ const DETAILS: &[Details] = &[
     s!(SIGXFSZ, Term),
 ];
 
+#[cfg(target_os = "vita")]
+const DETAILS: &[Details] = &[
+    s!(SIGABRT, Term),
+    s!(SIGALRM, Term),
+    s!(SIGBUS, Term),
+    s!(SIGFPE, Term),
+    s!(SIGHUP, Term),
+    s!(SIGILL, Term),
+    s!(SIGINT, Term),
+    // Can't override anyway, but...
+    s!(SIGKILL, Term),
+    s!(SIGPIPE, Term),
+    s!(SIGQUIT, Term),
+    s!(SIGSEGV, Term),
+    s!(SIGSYS, Term),
+    s!(SIGTERM, Term),
+    s!(SIGTRAP, Term),
+];
+
 #[cfg(windows)]
 const DETAILS: &[Details] = &[
     s!(SIGABRT, Term),
@@ -118,8 +137,16 @@ fn restore_default(signal: c_int) -> Result<(), Error> {
                 extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void),
             >(libc::SIG_DFL);
         }
-        #[cfg(not(target_os = "aix"))]
-        { action.sa_sigaction = libc::SIG_DFL as _; }
+        #[cfg(not(any(target_os = "aix", target_env = "newlib")))]
+        {
+            action.sa_sigaction = libc::SIG_DFL as _;
+        }
+
+        #[cfg(target_env = "newlib")]
+        {
+            action.sa_handler = mem::transmute(libc::SIG_DFL);
+        }
+
         if libc::sigaction(signal, &action, ptr::null_mut()) == 0 {
             Ok(())
         } else {
@@ -172,7 +199,7 @@ fn restore_default(signal: c_int) -> Result<(), Error> {
 /// first case, and `abort` terminates on `SIGABRT`, so the detected termination signal may be
 /// different).
 pub fn emulate_default_handler(signal: c_int) -> Result<(), Error> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "vita")))]
     {
         if signal == SIGSTOP || signal == SIGKILL {
             return low_level::raise(signal);
@@ -185,11 +212,11 @@ pub fn emulate_default_handler(signal: c_int) -> Result<(), Error> {
         .ok_or_else(|| Error::from_raw_os_error(EINVAL))?;
     match kind {
         DefaultKind::Ignore => Ok(()),
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "vita")))]
         DefaultKind::Stop => low_level::raise(SIGSTOP),
         DefaultKind::Term => {
             if let Ok(()) = restore_default(signal) {
-                #[cfg(not(windows))]
+                #[cfg(not(any(windows, target_env = "newlib")))]
                 unsafe {
                     #[allow(deprecated)]
                     let mut newsigs: sigset_t = mem::zeroed();

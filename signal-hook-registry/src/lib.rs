@@ -74,13 +74,18 @@ use std::ptr;
 use std::sync::ONCE_INIT;
 use std::sync::{Arc, Once};
 
+#[cfg(not(any(windows, target_env = "newlib")))]
+use libc::siginfo_t;
 #[cfg(not(windows))]
-use libc::{c_int, c_void, sigaction, siginfo_t};
+use libc::{c_int, c_void, sigaction};
 #[cfg(windows)]
 use libc::{c_int, sighandler_t};
 
+#[cfg(not(any(windows, target_os = "vita")))]
+use libc::SIGSTOP;
 #[cfg(not(windows))]
-use libc::{SIGFPE, SIGILL, SIGKILL, SIGSEGV, SIGSTOP};
+use libc::{SIGFPE, SIGILL, SIGKILL, SIGSEGV};
+
 #[cfg(windows)]
 use libc::{SIGFPE, SIGILL, SIGSEGV};
 
@@ -98,7 +103,7 @@ const SIG_GET: sighandler_t = 2;
 const SIG_ERR: sighandler_t = !0;
 
 // To simplify implementation. Not to be exposed.
-#[cfg(windows)]
+#[cfg(any(windows, target_env = "newlib"))]
 #[allow(non_camel_case_types)]
 struct siginfo_t;
 
@@ -158,17 +163,37 @@ impl Slot {
     fn new(signal: libc::c_int) -> Result<Self, Error> {
         // C data structure, expected to be zeroed out.
         let mut new: libc::sigaction = unsafe { mem::zeroed() };
-        #[cfg(not(target_os = "aix"))]
-        { new.sa_sigaction = handler as usize; }
+        #[cfg(not(any(target_os = "aix", target_env = "newlib")))]
+        {
+            new.sa_sigaction = handler as usize;
+        }
+        #[cfg(target_env = "newlib")]
+        unsafe {
+            new.sa_handler = std::mem::transmute(handler as usize);
+        }
         #[cfg(target_os = "aix")]
-        { new.sa_union.__su_sigaction = handler; }
+        {
+            new.sa_union.__su_sigaction = handler;
+        }
         // Android is broken and uses different int types than the rest (and different depending on
         // the pointer width). This converts the flags to the proper type no matter what it is on
         // the given platform.
+
+        #[cfg(not(target_env = "newlib"))]
         let flags = libc::SA_RESTART;
+        #[cfg(target_env = "newlib")]
+        let flags = 0;
+
         #[allow(unused_assignments)]
         let mut siginfo = flags;
-        siginfo = libc::SA_SIGINFO as _;
+        #[cfg(not(target_env = "newlib"))]
+        {
+            siginfo = libc::SA_SIGINFO as _;
+        }
+        #[cfg(target_env = "newlib")]
+        {
+            siginfo = 0;
+        }
         let flags = flags | siginfo;
         new.sa_flags = flags as _;
         // C data structure, expected to be zeroed out.
@@ -235,8 +260,10 @@ impl Prev {
 
     #[cfg(not(windows))]
     unsafe fn execute(&self, sig: c_int, info: *mut siginfo_t, data: *mut c_void) {
-        #[cfg(not(target_os = "aix"))]
+        #[cfg(not(any(target_os = "aix", target_env = "newlib")))]
         let fptr = self.info.sa_sigaction;
+        #[cfg(target_env = "newlib")]
+        let fptr = self.info.sa_handler as usize;
         #[cfg(target_os = "aix")]
         let fptr = self.info.sa_union.__su_sigaction as usize;
         if fptr != 0 && fptr != libc::SIG_DFL && fptr != libc::SIG_IGN {
@@ -249,7 +276,14 @@ impl Prev {
             // way?)
             #[allow(unused_assignments)]
             let mut siginfo = self.info.sa_flags;
-            siginfo = libc::SA_SIGINFO as _;
+            #[cfg(not(target_env = "newlib"))]
+            {
+                siginfo = libc::SA_SIGINFO as _;
+            }
+            #[cfg(target_env = "newlib")]
+            {
+                siginfo = 0;
+            }
             if self.info.sa_flags & siginfo == 0 {
                 let action = mem::transmute::<usize, extern "C" fn(c_int)>(fptr);
                 action(sig);
@@ -394,8 +428,10 @@ pub const FORBIDDEN: &[c_int] = FORBIDDEN_IMPL;
 
 #[cfg(windows)]
 const FORBIDDEN_IMPL: &[c_int] = &[SIGILL, SIGFPE, SIGSEGV];
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "vita")))]
 const FORBIDDEN_IMPL: &[c_int] = &[SIGKILL, SIGSTOP, SIGILL, SIGFPE, SIGSEGV];
+#[cfg(target_os = "vita")]
+const FORBIDDEN_IMPL: &[c_int] = &[SIGKILL, SIGILL, SIGFPE, SIGSEGV];
 
 /// Registers an arbitrary action for the given signal.
 ///

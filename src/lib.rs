@@ -349,7 +349,7 @@
 //!   needs, refer above for emulating default handlers.
 
 pub mod flag;
-#[cfg(all(not(windows), feature = "iterator"))]
+#[cfg(all(not(any(windows, target_env = "newlib")), feature = "iterator"))]
 #[cfg_attr(docsrs, doc(cfg(all(not(windows), feature = "iterator"))))]
 pub mod iterator;
 pub mod low_level;
@@ -367,14 +367,20 @@ pub mod consts {
     /// namespace with other names. Also available in the [`consts`][crate::consts] directly (but
     /// with more constants around).
     pub mod signal {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "vita")))]
         pub use libc::{
             SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCONT, SIGFPE, SIGHUP, SIGILL, SIGINT, SIGKILL,
             SIGPIPE, SIGPROF, SIGQUIT, SIGSEGV, SIGSTOP, SIGSYS, SIGTERM, SIGTRAP, SIGTSTP,
             SIGTTIN, SIGTTOU, SIGURG, SIGUSR1, SIGUSR2, SIGVTALRM, SIGWINCH, SIGXCPU, SIGXFSZ,
         };
 
-        #[cfg(not(any(windows, target_os = "haiku")))]
+        #[cfg(target_os = "vita")]
+        pub use libc::{
+            SIGABRT, SIGALRM, SIGBUS, SIGFPE, SIGHUP, SIGILL, SIGINT, SIGKILL, SIGPIPE, SIGQUIT,
+            SIGSEGV, SIGSYS, SIGTERM, SIGTRAP,
+        };
+
+        #[cfg(not(any(windows, target_os = "haiku", target_os = "vita")))]
         pub use libc::SIGIO;
 
         #[cfg(any(
